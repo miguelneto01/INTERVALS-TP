@@ -42,9 +42,11 @@ import {
   ConnectionStatus,
   LogItem,
   SessionStats,
-  SyncMode
+  SyncMode,
+  AthleteHrSettings
 } from '@/lib/types';
 import { formatDuration, formatRelativeDay, getSportBadge } from '@/lib/formatters';
+import { HrZonesCard } from '@/components/HrZonesCard';
 
 interface DesktopViewProps {
   syncMode: SyncMode;
@@ -63,7 +65,17 @@ interface DesktopViewProps {
   testConnections: () => void;
   isTesting: boolean;
   connectionStatus: ConnectionStatus;
+  // Athlete HR & Zones
+  athleteHr: AthleteHrSettings;
+  userLthr: number;
+  setUserLthr: (v: number) => void;
+  userMaxHr: number;
+  setUserMaxHr: (v: number) => void;
+  userFtp?: number;
+  setUserFtp?: (v: number) => void;
   // Planned Workouts
+  unexecutedOnly: boolean;
+  setUnexecutedOnly: (v: boolean) => void;
   plannedWorkouts: PlannedWorkoutItem[];
   isLoadingPlanned: boolean;
   selectedPlannedIds: Set<string>;
@@ -128,6 +140,15 @@ export function DesktopView(props: DesktopViewProps) {
     testConnections,
     isTesting,
     connectionStatus,
+    athleteHr,
+    userLthr,
+    setUserLthr,
+    userMaxHr,
+    setUserMaxHr,
+    userFtp,
+    setUserFtp,
+    unexecutedOnly,
+    setUnexecutedOnly,
     plannedWorkouts,
     isLoadingPlanned,
     selectedPlannedIds,
@@ -482,6 +503,20 @@ export function DesktopView(props: DesktopViewProps) {
         </button>
       </section>
 
+      {/* 3.1 HR & ZONES CALIBRATION (GPS & TRAININGPEAKS) */}
+      {syncMode === 'planned' && (
+        <HrZonesCard
+          athleteHr={athleteHr}
+          userLthr={userLthr}
+          setUserLthr={setUserLthr}
+          userMaxHr={userMaxHr}
+          setUserMaxHr={setUserMaxHr}
+          userFtp={userFtp}
+          setUserFtp={setUserFtp}
+          onSave={saveCredentials}
+        />
+      )}
+
       {/* 4. WORKOUT CONTROL TOOLBAR */}
       <section className="bg-[#161b22] border border-[#30363d] rounded-2xl p-4 sm:p-5 shadow-sm space-y-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -522,6 +557,26 @@ export function DesktopView(props: DesktopViewProps) {
                   Personalizado
                 </button>
               </div>
+            )}
+
+            {/* Filter Unexecuted Workouts Only */}
+            {syncMode === 'planned' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setUnexecutedOnly(!unexecutedOnly);
+                  setTimeout(fetchPlannedWorkouts, 50);
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all flex items-center gap-1.5 ${
+                  unexecutedOnly
+                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                    : 'bg-[#0d1117] text-gray-400 border-[#30363d] hover:text-white'
+                }`}
+                title="Sincronizar apenas treinos futuros ainda não executados"
+              >
+                <Filter className="w-3.5 h-3.5 text-emerald-400" />
+                <span>{unexecutedOnly ? 'Apenas Não Executados' : 'Todos os Treinos'}</span>
+              </button>
             )}
 
             {/* Search Input */}

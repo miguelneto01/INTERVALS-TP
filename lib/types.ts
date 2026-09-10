@@ -45,6 +45,25 @@ export interface PlannedWorkoutItem {
   workout_doc?: any;
   indoor?: boolean;
   category?: string;
+  activity_id?: string | number | null;
+  paired_activity_id?: string | number | null;
+}
+
+export interface HrZoneDefinition {
+  zone: number;
+  name: string;
+  minPercent: number;
+  maxPercent: number;
+  minBpm: number;
+  maxBpm: number;
+}
+
+export interface AthleteHrSettings {
+  lthr: number;
+  maxHr: number;
+  ftp?: number;
+  hrZones: HrZoneDefinition[];
+  source?: 'auto' | 'custom';
 }
 
 export interface ConnectionStatus {

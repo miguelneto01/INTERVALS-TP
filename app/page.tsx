@@ -1,6 +1,15 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useSyncExternalStore } from 'react';
+
+const emptySubscribe = () => () => {};
+function useIsMounted() {
+  return useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
+}
 import {
   Activity,
   ArrowRight,
@@ -22,62 +31,45 @@ import {
   PlannedWorkoutItem,
   ConnectionStatus,
   ViewMode,
-  SyncMode
+  SyncMode,
+  AthleteHrSettings
 } from '@/lib/types';
 import { ViewSwitcher } from '@/components/ViewSwitcher';
 import { MobileView } from '@/components/MobileView';
 import { DesktopView } from '@/components/DesktopView';
 import { WorkoutDetailModal } from '@/components/WorkoutDetailModal';
 
-function getInitialConfig() {
-  if (typeof window === 'undefined') {
-    return {
-      athleteId: DEFAULT_INTERVALS_ATHLETE,
-      apiKey: DEFAULT_INTERVALS_KEY,
-      cookie: DEFAULT_TP_COOKIE,
-      syncedCache: {} as Record<string, string>,
-      viewMode: 'auto' as ViewMode,
-    };
-  }
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      return {
-        athleteId: parsed.athleteId || DEFAULT_INTERVALS_ATHLETE,
-        apiKey: parsed.apiKey || DEFAULT_INTERVALS_KEY,
-        cookie: parsed.cookie || DEFAULT_TP_COOKIE,
-        syncedCache: (parsed.syncedCache || {}) as Record<string, string>,
-        viewMode: (parsed.savedViewMode || 'auto') as ViewMode,
-      };
-    }
-  } catch {
-    // Ignore error
-  }
-  return {
-    athleteId: DEFAULT_INTERVALS_ATHLETE,
-    apiKey: DEFAULT_INTERVALS_KEY,
-    cookie: DEFAULT_TP_COOKIE,
-    syncedCache: {} as Record<string, string>,
-    viewMode: 'auto' as ViewMode,
-  };
-}
-
 export default function SyncApp() {
-  // 1. Core State
-  const [athleteId, setAthleteId] = useState(() => getInitialConfig().athleteId);
-  const [apiKey, setApiKey] = useState(() => getInitialConfig().apiKey);
-  const [cookie, setCookie] = useState(() => getInitialConfig().cookie);
+  // 1. Core State (deterministic initial states for SSR and client hydration)
+  const [athleteId, setAthleteId] = useState(DEFAULT_INTERVALS_ATHLETE);
+  const [apiKey, setApiKey] = useState(DEFAULT_INTERVALS_KEY);
+  const [cookie, setCookie] = useState(DEFAULT_TP_COOKIE);
 
   // View Mode: 'auto' | 'mobile' | 'desktop'
-  const [viewMode, setViewMode] = useState<ViewMode>(() => getInitialConfig().viewMode);
+  const [viewMode, setViewMode] = useState<ViewMode>('auto');
   const [isMobileScreen, setIsMobileScreen] = useState(false);
+  const isMounted = useIsMounted();
 
   // Sync Mode: 'planned' (calendário futuro) or 'completed' (atividades passadas)
   const [syncMode, setSyncMode] = useState<SyncMode>('planned');
 
+  // Unexecuted Only Filter (Apenas treinos futuros não executados para o calendário do TP)
+  const [unexecutedOnly, setUnexecutedOnly] = useState(true);
+
+  // Athlete HR & Zones Settings (for exact GPS & TrainingPeaks calibration)
+  const [athleteHr, setAthleteHr] = useState<AthleteHrSettings>({
+    lthr: 165,
+    maxHr: 190,
+    ftp: 200,
+    hrZones: [],
+    source: 'auto',
+  });
+  const [userLthr, setUserLthr] = useState(165);
+  const [userMaxHr, setUserMaxHr] = useState(190);
+  const [userFtp, setUserFtp] = useState(200);
+
   // Cache & Session
-  const [syncedCache, setSyncedCache] = useState<Record<string, string>>(() => getInitialConfig().syncedCache);
+  const [syncedCache, setSyncedCache] = useState<Record<string, string>>({});
   const [ignoreCache, setIgnoreCache] = useState(true);
 
   // Planned Workouts State
@@ -86,15 +78,8 @@ export default function SyncApp() {
   const [isLoadingPlanned, setIsLoadingPlanned] = useState(false);
   const [plannedDaysPreset, setPlannedDaysPreset] = useState(7);
   const [customRange, setCustomRange] = useState(false);
-  const [plannedStartDate, setPlannedStartDate] = useState(() => {
-    const d = new Date();
-    return d.toISOString().split('T')[0];
-  });
-  const [plannedEndDate, setPlannedEndDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 7);
-    return d.toISOString().split('T')[0];
-  });
+  const [plannedStartDate, setPlannedStartDate] = useState('');
+  const [plannedEndDate, setPlannedEndDate] = useState('');
 
   // Completed Activities State
   const [activities, setActivities] = useState<ActivityItem[]>([]);
@@ -113,15 +98,8 @@ export default function SyncApp() {
   const [syncProgress, setSyncProgress] = useState({ current: 0, total: 0, itemName: '' });
   const [stats, setStats] = useState<SessionStats>({ uploaded: 0, skipped: 0, errors: 0 });
 
-  // Logs (with initial startup message)
-  const [logs, setLogs] = useState<LogItem[]>(() => [
-    {
-      id: 'startup-log',
-      timestamp: new Date().toLocaleTimeString('pt-BR'),
-      level: 'info',
-      message: 'Sistema de sincronização Intervals ➜ TrainingPeaks iniciado.',
-    },
-  ]);
+  // Logs (initialized empty for SSR, populated upon mount with client locale time)
+  const [logs, setLogs] = useState<LogItem[]>([]);
   const [logFilter, setLogFilter] = useState<'all' | 'ok' | 'warn' | 'error'>('all');
   const [copiedLog, setCopiedLog] = useState(false);
   const logContainerRef = useRef<HTMLDivElement | null>(null);
@@ -137,18 +115,67 @@ export default function SyncApp() {
     setLogs((prev) => [item, ...prev].slice(0, 400));
   };
 
-  // 3. Screen detection for 'auto' view mode
+  // 3. Client mount initialization & screen resize detection
   useEffect(() => {
-    const handleResize = () => {
+    const checkMobile = () => {
       setIsMobileScreen(window.innerWidth < 768);
     };
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+
+    const initTimer = setTimeout(() => {
+      // Initial dates calculated in user's browser timezone
+      const d = new Date();
+      const startStr = d.toISOString().split('T')[0];
+      const endD = new Date();
+      endD.setDate(endD.getDate() + 7);
+      const endStr = endD.toISOString().split('T')[0];
+      setPlannedStartDate(startStr);
+      setPlannedEndDate(endStr);
+
+      // Initial startup log
+      setLogs([
+        {
+          id: 'startup-log',
+          timestamp: new Date().toLocaleTimeString('pt-BR'),
+          level: 'info',
+          message: 'Sistema de sincronização Intervals ➜ TrainingPeaks iniciado.',
+        },
+      ]);
+
+      // Restore saved credentials from localStorage safely after mount
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.athleteId) setAthleteId(parsed.athleteId);
+          if (parsed.apiKey) setApiKey(parsed.apiKey);
+          if (parsed.cookie) setCookie(parsed.cookie);
+          if (parsed.syncedCache) setSyncedCache(parsed.syncedCache);
+          if (parsed.savedViewMode) setViewMode(parsed.savedViewMode);
+          if (parsed.userLthr) setUserLthr(parsed.userLthr);
+          if (parsed.userMaxHr) setUserMaxHr(parsed.userMaxHr);
+          if (parsed.userFtp) setUserFtp(parsed.userFtp);
+          if (parsed.unexecutedOnly !== undefined) setUnexecutedOnly(parsed.unexecutedOnly);
+        }
+      } catch {
+        // Ignore
+      }
+    }, 0);
+
+    return () => {
+      clearTimeout(initTimer);
+      window.removeEventListener('resize', checkMobile);
+    };
   }, []);
 
-  const effectiveMode: 'mobile' | 'desktop' =
-    viewMode === 'auto' ? (isMobileScreen ? 'mobile' : 'desktop') : viewMode;
+  const effectiveMode: 'mobile' | 'desktop' = !isMounted
+    ? 'desktop'
+    : viewMode === 'auto'
+    ? isMobileScreen
+      ? 'mobile'
+      : 'desktop'
+    : viewMode;
 
   // 5. Save credentials helper
   const saveCredentials = () => {
@@ -161,9 +188,13 @@ export default function SyncApp() {
           cookie,
           syncedCache,
           savedViewMode: viewMode,
+          userLthr,
+          userMaxHr,
+          userFtp,
+          unexecutedOnly,
         })
       );
-      addLog('ok', 'Configurações e chaves salvas localmente no navegador com sucesso.');
+      addLog('ok', 'Configurações, zonas de FC e chaves salvas localmente no navegador com sucesso.');
     } catch (err: any) {
       addLog('error', `Falha ao salvar no navegador: ${err.message}`);
     }
@@ -173,7 +204,11 @@ export default function SyncApp() {
     setAthleteId(DEFAULT_INTERVALS_ATHLETE);
     setApiKey(DEFAULT_INTERVALS_KEY);
     setCookie(DEFAULT_TP_COOKIE);
-    addLog('info', 'Credenciais restauradas para os valores padrão do atleta.');
+    setUserLthr(165);
+    setUserMaxHr(190);
+    setUserFtp(200);
+    setUnexecutedOnly(true);
+    addLog('info', 'Credenciais e limites restaurados para os valores padrão.');
   };
 
   const clearAllCache = () => {
@@ -186,6 +221,54 @@ export default function SyncApp() {
     }
     addLog('ok', 'Cache local e histórico limpos.');
   };
+
+  // Fetch Athlete HR & Zones from Intervals.icu / TrainingPeaks
+  const fetchAthleteSettings = useCallback(async () => {
+    if (!athleteId || !apiKey) return;
+    try {
+      const res = await fetch('/api/athlete-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          athleteId: athleteId.trim(),
+          apiKey: apiKey.trim(),
+          cookie: cookie.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (data.ok && data.athlete) {
+        setAthleteHr(data.athlete);
+        if (data.athlete.lthr && (!userLthr || userLthr === 165)) {
+          setUserLthr(data.athlete.lthr);
+        }
+        if (data.athlete.maxHr && (!userMaxHr || userMaxHr === 190)) {
+          setUserMaxHr(data.athlete.maxHr);
+        }
+        if (data.athlete.ftp && (!userFtp || userFtp === 200)) {
+          setUserFtp(data.athlete.ftp);
+        }
+        addLog(
+          'info',
+          `Limites de FC calibrados: LTHR=${data.athlete.lthr} bpm, MaxHR=${data.athlete.maxHr} bpm (${data.athlete.source === 'trainingpeaks' ? 'TrainingPeaks' : 'Intervals.icu'}).`
+        );
+      }
+    } catch {
+      // Ignore
+    }
+  }, [athleteId, apiKey, cookie, userLthr, userMaxHr, userFtp]);
+
+  useEffect(() => {
+    let active = true;
+    const timer = setTimeout(() => {
+      if (active) {
+        fetchAthleteSettings();
+      }
+    }, 100);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [fetchAthleteSettings]);
 
   // 6. Test Connections
   const testConnections = async () => {
@@ -222,6 +305,9 @@ export default function SyncApp() {
       } else {
         addLog('error', `TrainingPeaks Falha: ${data.tp?.error || 'Verifique o cookie de sessão'}`);
       }
+
+      // Also reload athlete settings
+      await fetchAthleteSettings();
     } catch (err: any) {
       addLog('error', `Falha ao testar credenciais: ${err.message}`);
     } finally {
@@ -250,7 +336,10 @@ export default function SyncApp() {
       setPlannedEndDate(newest);
     }
 
-    addLog('info', `Buscando treinos planejados no Intervals entre ${oldest} e ${newest}...`);
+    addLog(
+      'info',
+      `Buscando treinos planejados (${unexecutedOnly ? 'apenas não executados' : 'todos'}) no Intervals entre ${oldest} e ${newest}...`
+    );
 
     try {
       const res = await fetch('/api/planned-workouts', {
@@ -261,6 +350,7 @@ export default function SyncApp() {
           apiKey: apiKey.trim(),
           oldest,
           newest,
+          unexecutedOnly,
         }),
       });
 
@@ -394,11 +484,14 @@ export default function SyncApp() {
           apiKey: apiKey.trim(),
           cookie: cookie.trim(),
           workout: w,
+          userLthr,
+          userMaxHr,
+          userFtp,
         }),
       });
 
       const data = await res.json();
-      if (!res.ok || !data.success) {
+      if (!res.ok || (!data.ok && !data.success)) {
         throw new Error(data.error || 'Falha ao sincronizar treino planejado');
       }
 
@@ -615,6 +708,15 @@ export default function SyncApp() {
             testConnections={testConnections}
             isTesting={isTesting}
             connectionStatus={connectionStatus}
+            athleteHr={athleteHr}
+            userLthr={userLthr}
+            setUserLthr={setUserLthr}
+            userMaxHr={userMaxHr}
+            setUserMaxHr={setUserMaxHr}
+            userFtp={userFtp}
+            setUserFtp={setUserFtp}
+            unexecutedOnly={unexecutedOnly}
+            setUnexecutedOnly={setUnexecutedOnly}
             plannedWorkouts={plannedWorkouts}
             isLoadingPlanned={isLoadingPlanned}
             selectedPlannedIds={selectedPlannedIds}
@@ -669,6 +771,15 @@ export default function SyncApp() {
             testConnections={testConnections}
             isTesting={isTesting}
             connectionStatus={connectionStatus}
+            athleteHr={athleteHr}
+            userLthr={userLthr}
+            setUserLthr={setUserLthr}
+            userMaxHr={userMaxHr}
+            setUserMaxHr={setUserMaxHr}
+            userFtp={userFtp}
+            setUserFtp={setUserFtp}
+            unexecutedOnly={unexecutedOnly}
+            setUnexecutedOnly={setUnexecutedOnly}
             plannedWorkouts={plannedWorkouts}
             isLoadingPlanned={isLoadingPlanned}
             selectedPlannedIds={selectedPlannedIds}

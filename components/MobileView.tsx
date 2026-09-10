@@ -36,9 +36,11 @@ import {
   LogItem,
   SessionStats,
   SyncMode,
-  MobileTab
+  MobileTab,
+  AthleteHrSettings
 } from '@/lib/types';
 import { formatDuration, formatRelativeDay, getSportBadge } from '@/lib/formatters';
+import { HrZonesCard } from '@/components/HrZonesCard';
 
 interface MobileViewProps {
   syncMode: SyncMode;
@@ -57,7 +59,17 @@ interface MobileViewProps {
   testConnections: () => void;
   isTesting: boolean;
   connectionStatus: ConnectionStatus;
+  // Athlete HR & Zones
+  athleteHr: AthleteHrSettings;
+  userLthr: number;
+  setUserLthr: (v: number) => void;
+  userMaxHr: number;
+  setUserMaxHr: (v: number) => void;
+  userFtp?: number;
+  setUserFtp?: (v: number) => void;
   // Planned Workouts
+  unexecutedOnly: boolean;
+  setUnexecutedOnly: (v: boolean) => void;
   plannedWorkouts: PlannedWorkoutItem[];
   isLoadingPlanned: boolean;
   selectedPlannedIds: Set<string>;
@@ -104,6 +116,7 @@ export function MobileView(props: MobileViewProps) {
   const [activeTab, setActiveTab] = useState<MobileTab>('workouts');
   const [showApiKey, setShowApiKey] = useState(false);
   const [showCookie, setShowCookie] = useState(false);
+  const [showHrCard, setShowHrCard] = useState(false);
 
   const {
     syncMode,
@@ -120,6 +133,15 @@ export function MobileView(props: MobileViewProps) {
     testConnections,
     isTesting,
     connectionStatus,
+    athleteHr,
+    userLthr,
+    setUserLthr,
+    userMaxHr,
+    setUserMaxHr,
+    userFtp,
+    setUserFtp,
+    unexecutedOnly,
+    setUnexecutedOnly,
     plannedWorkouts,
     isLoadingPlanned,
     selectedPlannedIds,
@@ -267,6 +289,35 @@ export function MobileView(props: MobileViewProps) {
 
             {syncMode === 'planned' && (
               <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUnexecutedOnly(!unexecutedOnly);
+                    setTimeout(fetchPlannedWorkouts, 50);
+                  }}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all border flex items-center gap-1 ${
+                    unexecutedOnly
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm'
+                      : 'bg-[#161b22] text-[#8b949e] border-[#30363d] hover:text-white'
+                  }`}
+                  title="Apenas treinos futuros não executados"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                  {unexecutedOnly ? 'Não Executados' : 'Todos'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowHrCard(!showHrCard)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all border flex items-center gap-1 ${
+                    showHrCard
+                      ? 'bg-red-500/20 text-red-300 border-red-500/40'
+                      : 'bg-[#161b22] text-[#8b949e] border-[#30363d] hover:text-white'
+                  }`}
+                >
+                  FC: {userLthr || athleteHr.lthr || 165} bpm
+                </button>
+
                 {[
                   { label: 'Hoje + 7d', days: 7 },
                   { label: '14 dias', days: 14 },
@@ -301,6 +352,22 @@ export function MobileView(props: MobileViewProps) {
                 >
                   Personalizado
                 </button>
+              </div>
+            )}
+
+            {/* Mobile HR Zones Card (Collapsible) */}
+            {syncMode === 'planned' && showHrCard && (
+              <div className="pt-2 animate-fadeIn">
+                <HrZonesCard
+                  athleteHr={athleteHr}
+                  userLthr={userLthr}
+                  setUserLthr={setUserLthr}
+                  userMaxHr={userMaxHr}
+                  setUserMaxHr={setUserMaxHr}
+                  userFtp={userFtp}
+                  setUserFtp={setUserFtp}
+                  onSave={saveCredentials}
+                />
               </div>
             )}
 

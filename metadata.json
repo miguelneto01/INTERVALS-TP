@@ -1,0 +1,6 @@
+{
+  "name": "Intervals ➜ TrainingPeaks Sync",
+  "description": "Sincronizador automático de treinos e arquivos FIT do Intervals.icu para o TrainingPeaks.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
